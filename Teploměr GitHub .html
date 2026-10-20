@@ -1,0 +1,119 @@
+<!doctype html>
+<html lang="cs">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#102338">
+<title>Teploměr Kunštát</title>
+<style>
+:root{color-scheme:dark;--bg:#0b1724;--panel:#14283a;--line:#294357;--text:#f2f7fb;--muted:#a9bdcc;--accent:#72d5c5}
+*{box-sizing:border-box}body{margin:0;background:linear-gradient(160deg,#102338,#09131e 65%);font:16px -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;color:var(--text);min-height:100vh}
+main{max-width:760px;margin:auto;padding:24px 16px 40px}.eyebrow{color:var(--accent);font-size:12px;font-weight:800;letter-spacing:.14em;text-transform:uppercase}
+h1{font-size:32px;margin:8px 0 4px}p{color:var(--muted);line-height:1.45}.panel{background:rgba(20,40,58,.94);border:1px solid var(--line);border-radius:20px;padding:18px;margin:14px 0;box-shadow:0 12px 30px #0002}
+.hero{display:grid;grid-template-columns:1fr 1fr;gap:12px}.metric{background:#0d1e2c;border-radius:15px;padding:16px}.metric small{display:block;color:var(--muted);margin-bottom:8px}.big{font-size:34px;font-weight:750;letter-spacing:-.04em}.sub{font-size:13px;color:var(--muted);margin-top:6px}
+.row{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap}button{border:0;border-radius:12px;padding:12px 15px;font-weight:700;background:var(--accent);color:#09202a;font-size:14px}button.secondary{background:#223d52;color:var(--text);border:1px solid #38546a}button.danger{background:#482c36;color:#ffe5e9;border:1px solid #70414e}
+.status{display:inline-flex;align-items:center;gap:7px;color:var(--muted);font-size:13px}.dot{width:8px;height:8px;border-radius:50%;background:var(--accent)}
+table{width:100%;border-collapse:collapse;font-size:14px}th,td{text-align:left;padding:11px 6px;border-bottom:1px solid var(--line)}th{color:var(--muted);font-weight:600}td:last-child,th:last-child{text-align:right}.empty{color:var(--muted);text-align:center;padding:24px 8px}
+canvas{width:100%;height:180px;display:block}.note{font-size:12px;color:var(--muted)}.foot{font-size:12px;color:var(--muted);text-align:center;margin-top:22px}
+@media(max-width:420px){h1{font-size:28px}.big{font-size:29px}.panel{padding:15px}}
+</style>
+</head>
+<body><main>
+<div class="eyebrow">Automatický záznam počasí</div>
+<h1>🌡️ Teploměr Kunštát</h1>
+<p>Hodinová teplota venkovního vzduchu, denní průměr a historie. Data se ukládají v tomto prohlížeči. Pokud se stránka otevřela jen v náhledu aplikace Soubory, zkus ji otevřít v Safari.</p>
+<section class="panel">
+<div class="row"><span class="status"><span class="dot"></span><span id="status">Připraveno</span></span><button id="refresh">Aktualizovat nyní</button></div>
+<div class="hero" style="margin-top:16px">
+<div class="metric"><small>Aktuální teplota</small><div class="big" id="current">— °C</div><div class="sub" id="updated">Zatím bez měření</div></div>
+<div class="metric"><small>Dnešní průměr</small><div class="big" id="mean">— °C</div><div class="sub" id="count">0 záznamů dnes</div></div>
+<div class="metric"><small>Dnešní minimum</small><div class="big" id="min">— °C</div></div>
+<div class="metric"><small>Dnešní maximum</small><div class="big" id="max">— °C</div></div>
+</div>
+<p class="note">Zdroj: Open-Meteo, modelová teplota ve 2 m nad zemí. Nejde o přímé měření stanice ČHMÚ.</p>
+</section>
+<section class="panel">
+<div class="row"><h2 style="font-size:19px;margin:0">Průběh dne</h2><span class="note" id="chartDate"></span></div>
+<canvas id="chart" width="700" height="220" aria-label="Graf teplot během dne"></canvas>
+</section>
+<section class="panel">
+<div class="row"><h2 style="font-size:19px;margin:0">Denní historie</h2><button class="secondary" id="csv">Export CSV</button></div>
+<div style="overflow-x:auto;margin-top:10px"><table><thead><tr><th>Datum</th><th>Průměr</th><th>Min.</th><th>Max.</th><th>Počet</th></tr></thead><tbody id="history"></tbody></table></div>
+<div class="row" style="margin-top:14px"><span class="note">Záznamy se ukládají lokálně v zařízení.</span><button class="danger" id="clear">Smazat historii</button></div>
+</section>
+<section class="panel">
+<h2 style="font-size:19px;margin:0">Jak to funguje</h2>
+<p style="margin-bottom:0">Aplikace načte hodinová data automaticky při otevření a následně každou hodinu, pokud zůstane otevřená. iPhone může při uzamčení nebo přepnutí do jiné aplikace běh na pozadí zastavit. Pro spolehlivé nepřetržité měření by bylo potřeba samostatné serverové plánování.</p>
+</section>
+<div class="foot">Kunštát · 49.50° N, 16.52° E · čas Europe/Prague</div>
+</main>
+<script>
+const LAT=49.50,LON=16.52,KEY='kunstat-temp-log-v1';
+let records=load();
+function load(){try{return JSON.parse(localStorage.getItem(KEY)||'[]')}catch{return []}}
+function save(){localStorage.setItem(KEY,JSON.stringify(records))}
+function fmtDate(d){return new Intl.DateTimeFormat('sv-SE',{timeZone:'Europe/Prague',year:'numeric',month:'2-digit',day:'2-digit'}).format(d)}
+function fmtTime(d){return new Intl.DateTimeFormat('cs-CZ',{timeZone:'Europe/Prague',hour:'2-digit',minute:'2-digit'}).format(d)}
+function dayRecords(day){return records.filter(r=>r.day===day)}
+function stats(arr){if(!arr.length)return null;let vals=arr.map(r=>r.temp);return {mean:vals.reduce((a,b)=>a+b,0)/vals.length,min:Math.min(...vals),max:Math.max(...vals)}}
+function n(v){return v==null?'—':v.toLocaleString('cs-CZ',{minimumFractionDigits:1,maximumFractionDigits:1})+' °C'}
+function setStatus(t){document.getElementById('status').textContent=t}
+async function refresh(){
+ const btn=document.getElementById('refresh');btn.disabled=true;setStatus('Načítám teplotu…');
+ try{
+  const url=`https://api.open-meteo.com/v1/forecast?latitude=${LAT}&longitude=${LON}&hourly=temperature_2m&current=temperature_2m&timezone=Europe%2FPrague&forecast_days=1`;
+  const res=await fetch(url);if(!res.ok)throw new Error('HTTP '+res.status);const data=await res.json();
+  const now=new Date(),day=fmtDate(now),hour=new Intl.DateTimeFormat('sv-SE',{timeZone:'Europe/Prague',year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit'}).format(now).replace(' ','T').slice(0,13);
+  let times=data.hourly.time, idx=times.findIndex(t=>t.startsWith(hour));
+  if(idx<0){
+    // Fallback: use the nearest hourly timestamp, comparing local wall-clock labels.
+    const target=hour;
+    idx=times.reduce((best,t,i)=>Math.abs(t.slice(0,13).localeCompare(target))<Math.abs(times[best].slice(0,13).localeCompare(target))?i:best,0);
+  }
+  const temp=data.hourly.temperature_2m[idx] ?? data.current?.temperature_2m;
+  if(typeof temp!=='number')throw new Error('Teplota není dostupná');
+  const stamp=now.toISOString(), key=fmtDate(now)+'T'+fmtTime(now);
+  const existing=records.findIndex(r=>r.key===key);
+  const rec={key,day,time:fmtTime(now),timestamp:stamp,temp:Number(temp.toFixed(2))};
+  if(existing>=0)records[existing]=rec;else records.push(rec);
+  records.sort((a,b)=>a.timestamp.localeCompare(b.timestamp));save();setStatus('Aktualizováno '+fmtTime(now));render();
+ }catch(e){
+  const msg = e && e.message ? e.message : String(e);
+  setStatus('Chyba: '+msg);
+  document.getElementById('updated').textContent='Načtení se nezdařilo. Otevři aplikaci v Safari a zkontroluj internet.';
+  console.error(e)
+ }
+ finally{btn.disabled=false}
+}
+function render(){
+ const now=new Date(),day=fmtDate(now),today=dayRecords(day),s=stats(today),last=records[records.length-1];
+ document.getElementById('current').textContent=last?n(last.temp):'— °C';
+ document.getElementById('updated').textContent=last?'Poslední záznam '+fmtTime(new Date(last.timestamp)):'Zatím bez měření';
+ document.getElementById('mean').textContent=s?n(s.mean):'— °C';
+ document.getElementById('count').textContent=today.length+' záznamů dnes';
+ document.getElementById('min').textContent=s?n(s.min):'— °C';document.getElementById('max').textContent=s?n(s.max):'— °C';
+ document.getElementById('chartDate').textContent=day;
+ const days=[...new Set(records.map(r=>r.day))].sort().reverse().slice(0,14);
+ document.getElementById('history').innerHTML=days.length?days.map(d=>{let a=dayRecords(d),x=stats(a);return `<tr><td>${d}</td><td>${n(x.mean)}</td><td>${n(x.min)}</td><td>${n(x.max)}</td><td>${a.length}</td></tr>`}).join(''):'<tr><td colspan="5" class="empty">Zatím nejsou uložené žádné záznamy.</td></tr>';
+ draw(today);
+}
+function draw(arr){
+ const c=document.getElementById('chart'),ctx=c.getContext('2d'),w=c.width,h=c.height;ctx.clearRect(0,0,w,h);
+ const pad={l:45,r:16,t:18,b:28};ctx.font='12px system-ui';ctx.strokeStyle='#294357';ctx.fillStyle='#a9bdcc';
+ if(!arr.length){ctx.fillText('Po prvním načtení se zde zobrazí teploty.',pad.l,95);return}
+ let vals=arr.map(r=>r.temp),lo=Math.floor(Math.min(...vals)-1),hi=Math.ceil(Math.max(...vals)+1);if(hi===lo)hi=lo+1;
+ for(let i=0;i<=4;i++){let y=pad.t+(h-pad.t-pad.b)*i/4;ctx.beginPath();ctx.moveTo(pad.l,y);ctx.lineTo(w-pad.r,y);ctx.stroke();ctx.fillText((hi-(hi-lo)*i/4).toFixed(0)+'°',5,y+4)}
+ const pts=arr.map(r=>({x:pad.l+(new Date(r.timestamp).getHours()/23)*(w-pad.l-pad.r),y:pad.t+(hi-r.temp)/(hi-lo)*(h-pad.t-pad.b)}));
+ ctx.strokeStyle='#72d5c5';ctx.lineWidth=3;ctx.beginPath();pts.forEach((p,i)=>i?ctx.lineTo(p.x,p.y):ctx.moveTo(p.x,p.y));ctx.stroke();
+ ctx.fillStyle='#72d5c5';pts.forEach(p=>{ctx.beginPath();ctx.arc(p.x,p.y,3,0,Math.PI*2);ctx.fill()});
+ ctx.fillStyle='#a9bdcc';ctx.fillText('00 h',pad.l,h-7);ctx.fillText('12 h',pad.l+(w-pad.l-pad.r)/2-12,h-7);ctx.fillText('23 h',w-pad.r-30,h-7);
+}
+document.getElementById('refresh').addEventListener('click',refresh);
+document.getElementById('csv').addEventListener('click',()=>{
+ const rows=[['datum','čas','teplota_C'],...records.map(r=>[r.day,r.time,String(r.temp).replace('.',',')])];
+ const csv='\ufeff'+rows.map(row=>row.map(x=>'"'+String(x).replace(/"/g,'""')+'"').join(';')).join('\r\n');
+ const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([csv],{type:'text/csv;charset=utf-8'}));a.download='teploty-kunstat.csv';a.click();URL.revokeObjectURL(a.href);
+});
+document.getElementById('clear').addEventListener('click',()=>{if(confirm('Opravdu smazat všechny uložené záznamy?')){records=[];save();render();setStatus('Historie smazána')}});
+render();refresh();setInterval(refresh,60*60*1000);
+</script></body></html>
